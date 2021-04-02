@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +19,10 @@ package org.springframework.boot.gradle.tasks.bundling;
 import java.io.File;
 import java.util.Collections;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 
 import org.gradle.api.Action;
-import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.Project;
 import org.gradle.api.artifacts.ResolvableDependencies;
 import org.gradle.api.file.CopySpec;
 import org.gradle.api.file.FileCollection;
@@ -71,15 +72,19 @@ public class BootJar extends Jar implements BootArchive {
 	 * Creates a new {@code BootJar} task.
 	 */
 	public BootJar() {
-		this.support = new BootArchiveSupport(LAUNCHER, this::isLibrary, this::resolveZipCompression);
-		this.bootInfSpec = getProject().copySpec().into("BOOT-INF");
-		this.mainClass = getProject().getObjects().property(String.class);
+		this.support = new BootArchiveSupport(LAUNCHER, new LibrarySpec(), new ZipCompressionResolver());
+		Project project = getProject();
+		this.bootInfSpec = project.copySpec().into("BOOT-INF");
+		this.mainClass = project.getObjects().property(String.class);
 		configureBootInfSpec(this.bootInfSpec);
 		getMainSpec().with(this.bootInfSpec);
-		getProject().getConfigurations().all((configuration) -> {
+		project.getConfigurations().all((configuration) -> {
 			ResolvableDependencies incoming = configuration.getIncoming();
-			incoming.afterResolve(
-					(resolvableDependencies) -> this.resolvedDependencies.processConfiguration(configuration));
+			incoming.afterResolve((resolvableDependencies) -> {
+				if (resolvableDependencies == incoming) {
+					this.resolvedDependencies.processConfiguration(project, configuration);
+				}
+			});
 		});
 	}
 
@@ -121,11 +126,6 @@ public class BootJar extends Jar implements BootArchive {
 			return this.support.createCopyAction(this, layerResolver, layerToolsLocation);
 		}
 		return this.support.createCopyAction(this);
-	}
-
-	@Internal
-	protected Iterable<Configuration> getConfigurations() {
-		return getProject().getConfigurations();
 	}
 
 	@Override
@@ -183,7 +183,7 @@ public class BootJar extends Jar implements BootArchive {
 	/**
 	 * Configures the jar to be layered using the default layering.
 	 * @since 2.3.0
-	 * @deprecated since 2.4.0 as layering as now enabled by default.
+	 * @deprecated since 2.4.0 for removal in 2.6.0 as layering as now enabled by default.
 	 */
 	@Deprecated
 	public void layered() {
@@ -218,18 +218,6 @@ public class BootJar extends Jar implements BootArchive {
 	@Override
 	public void setClasspath(FileCollection classpath) {
 		this.classpath = getProject().files(classpath);
-	}
-
-	@Override
-	@Deprecated
-	public boolean isExcludeDevtools() {
-		return this.support.isExcludeDevtools();
-	}
-
-	@Override
-	@Deprecated
-	public void setExcludeDevtools(boolean excludeDevtools) {
-		this.support.setExcludeDevtools(excludeDevtools);
 	}
 
 	/**
@@ -315,6 +303,24 @@ public class BootJar extends Jar implements BootArchive {
 	@Internal
 	ResolvedDependencies getResolvedDependencies() {
 		return this.resolvedDependencies;
+	}
+
+	private final class LibrarySpec implements Spec<FileCopyDetails> {
+
+		@Override
+		public boolean isSatisfiedBy(FileCopyDetails details) {
+			return isLibrary(details);
+		}
+
+	}
+
+	private final class ZipCompressionResolver implements Function<FileCopyDetails, ZipCompression> {
+
+		@Override
+		public ZipCompression apply(FileCopyDetails details) {
+			return resolveZipCompression(details);
+		}
+
 	}
 
 }

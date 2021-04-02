@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,10 +21,13 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Handler;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
@@ -109,10 +112,13 @@ class LoggingApplicationListenerTests {
 
 	private File logFile;
 
+	private Set<Object> systemPropertyNames;
+
 	private CapturedOutput output;
 
 	@BeforeEach
 	void init(CapturedOutput output) throws SecurityException, IOException {
+		this.systemPropertyNames = new HashSet<>(System.getProperties().keySet());
 		this.output = output;
 		this.logFile = new File(this.tempDir.toFile(), "foo.log");
 		LogManager.getLogManager().readConfiguration(JavaLoggingSystem.class.getResourceAsStream("logging.properties"));
@@ -131,15 +137,8 @@ class LoggingApplicationListenerTests {
 			loggingSystem.getShutdownHandler().run();
 		}
 		System.clearProperty(LoggingSystem.class.getName());
-		System.clearProperty(LoggingSystemProperties.LOG_FILE);
-		System.clearProperty(LoggingSystemProperties.LOG_PATH);
-		System.clearProperty(LoggingSystemProperties.PID_KEY);
-		System.clearProperty(LoggingSystemProperties.EXCEPTION_CONVERSION_WORD);
-		System.clearProperty(LoggingSystemProperties.CONSOLE_LOG_PATTERN);
-		System.clearProperty(LoggingSystemProperties.FILE_LOG_PATTERN);
-		System.clearProperty(LoggingSystemProperties.LOG_LEVEL_PATTERN);
-		System.clearProperty(LoggingSystemProperties.ROLLING_FILE_NAME_PATTERN);
 		System.clearProperty(LoggingSystem.SYSTEM_PROPERTY);
+		System.getProperties().keySet().retainAll(this.systemPropertyNames);
 		if (this.context != null) {
 			this.context.close();
 		}
@@ -407,24 +406,30 @@ class LoggingApplicationListenerTests {
 	}
 
 	@Test
-	void shutdownHookIsNotRegisteredByDefault() {
+	void shutdownHookIsRegisteredByDefault() throws Exception {
 		TestLoggingApplicationListener listener = new TestLoggingApplicationListener();
+		Object registered = ReflectionTestUtils.getField(listener, TestLoggingApplicationListener.class,
+				"shutdownHookRegistered");
+		((AtomicBoolean) registered).set(false);
 		System.setProperty(LoggingSystem.class.getName(), TestShutdownHandlerLoggingSystem.class.getName());
-		multicastEvent(listener, new ApplicationStartingEvent(this.bootstrapContext, new SpringApplication(), NO_ARGS));
-		listener.initialize(this.context.getEnvironment(), this.context.getClassLoader());
-		assertThat(listener.shutdownHook).isNull();
-	}
-
-	@Test
-	void shutdownHookCanBeRegistered() throws Exception {
-		TestLoggingApplicationListener listener = new TestLoggingApplicationListener();
-		System.setProperty(LoggingSystem.class.getName(), TestShutdownHandlerLoggingSystem.class.getName());
-		addPropertiesToEnvironment(this.context, "logging.register_shutdown_hook=true");
 		multicastEvent(listener, new ApplicationStartingEvent(this.bootstrapContext, new SpringApplication(), NO_ARGS));
 		listener.initialize(this.context.getEnvironment(), this.context.getClassLoader());
 		assertThat(listener.shutdownHook).isNotNull();
 		listener.shutdownHook.start();
 		assertThat(TestShutdownHandlerLoggingSystem.shutdownLatch.await(30, TimeUnit.SECONDS)).isTrue();
+	}
+
+	@Test
+	void shutdownHookRegistrationCanBeDisabled() throws Exception {
+		TestLoggingApplicationListener listener = new TestLoggingApplicationListener();
+		Object registered = ReflectionTestUtils.getField(listener, TestLoggingApplicationListener.class,
+				"shutdownHookRegistered");
+		((AtomicBoolean) registered).set(false);
+		System.setProperty(LoggingSystem.class.getName(), TestShutdownHandlerLoggingSystem.class.getName());
+		addPropertiesToEnvironment(this.context, "logging.register_shutdown_hook=false");
+		multicastEvent(listener, new ApplicationStartingEvent(this.bootstrapContext, new SpringApplication(), NO_ARGS));
+		listener.initialize(this.context.getEnvironment(), this.context.getClassLoader());
+		assertThat(listener.shutdownHook).isNull();
 	}
 
 	@Test
@@ -467,9 +472,14 @@ class LoggingApplicationListenerTests {
 		assertThat(System.getProperty(LoggingSystemProperties.LOG_FILE)).isEqualTo(this.logFile.getAbsolutePath());
 		assertThat(System.getProperty(LoggingSystemProperties.LOG_LEVEL_PATTERN)).isEqualTo("level");
 		assertThat(System.getProperty(LoggingSystemProperties.LOG_PATH)).isEqualTo("path");
+		assertThat(System.getProperty(LoggingSystemProperties.PID_KEY)).isNotNull();
+		assertDeprecated();
+	}
+
+	@SuppressWarnings("deprecation")
+	private void assertDeprecated() {
 		assertThat(System.getProperty(LoggingSystemProperties.ROLLING_FILE_NAME_PATTERN))
 				.isEqualTo("my.log.%d{yyyyMMdd}.%i.gz");
-		assertThat(System.getProperty(LoggingSystemProperties.PID_KEY)).isNotNull();
 	}
 
 	@Test

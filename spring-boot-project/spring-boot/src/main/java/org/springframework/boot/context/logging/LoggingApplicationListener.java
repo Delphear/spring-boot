@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -271,7 +271,7 @@ public class LoggingApplicationListener implements GenericApplicationListener {
 	 * @param classLoader the classloader
 	 */
 	protected void initialize(ConfigurableEnvironment environment, ClassLoader classLoader) {
-		new LoggingSystemProperties(environment).apply();
+		getLoggingSystemProperties(environment).apply();
 		this.logFile = LogFile.get(environment);
 		if (this.logFile != null) {
 			this.logFile.applyToSystemProperties();
@@ -281,6 +281,11 @@ public class LoggingApplicationListener implements GenericApplicationListener {
 		initializeSystem(environment, this.loggingSystem, this.logFile);
 		initializeFinalLoggingLevels(environment, this.loggingSystem);
 		registerShutdownHookIfNecessary(environment, this.loggingSystem);
+	}
+
+	private LoggingSystemProperties getLoggingSystemProperties(ConfigurableEnvironment environment) {
+		return (this.loggingSystem != null) ? this.loggingSystem.getSystemProperties(environment)
+				: new LoggingSystemProperties(environment);
 	}
 
 	private void initializeEarlyLoggingLevel(ConfigurableEnvironment environment) {
@@ -300,26 +305,26 @@ public class LoggingApplicationListener implements GenericApplicationListener {
 	}
 
 	private void initializeSystem(ConfigurableEnvironment environment, LoggingSystem system, LogFile logFile) {
-		LoggingInitializationContext initializationContext = new LoggingInitializationContext(environment);
 		String logConfig = StringUtils.trimWhitespace(environment.getProperty(CONFIG_PROPERTY));
-		if (ignoreLogConfig(logConfig)) {
-			system.initialize(initializationContext, null, logFile);
-		}
-		else {
-			try {
+		try {
+			LoggingInitializationContext initializationContext = new LoggingInitializationContext(environment);
+			if (ignoreLogConfig(logConfig)) {
+				system.initialize(initializationContext, null, logFile);
+			}
+			else {
 				system.initialize(initializationContext, logConfig, logFile);
 			}
-			catch (Exception ex) {
-				Throwable exceptionToReport = ex;
-				while (exceptionToReport != null && !(exceptionToReport instanceof FileNotFoundException)) {
-					exceptionToReport = exceptionToReport.getCause();
-				}
-				exceptionToReport = (exceptionToReport != null) ? exceptionToReport : ex;
-				// NOTE: We can't use the logger here to report the problem
-				System.err.println("Logging system failed to initialize using configuration from '" + logConfig + "'");
-				exceptionToReport.printStackTrace(System.err);
-				throw new IllegalStateException(ex);
+		}
+		catch (Exception ex) {
+			Throwable exceptionToReport = ex;
+			while (exceptionToReport != null && !(exceptionToReport instanceof FileNotFoundException)) {
+				exceptionToReport = exceptionToReport.getCause();
 			}
+			exceptionToReport = (exceptionToReport != null) ? exceptionToReport : ex;
+			// NOTE: We can't use the logger here to report the problem
+			System.err.println("Logging system failed to initialize using configuration from '" + logConfig + "'");
+			exceptionToReport.printStackTrace(System.err);
+			throw new IllegalStateException(ex);
 		}
 	}
 
@@ -393,7 +398,7 @@ public class LoggingApplicationListener implements GenericApplicationListener {
 	}
 
 	private void registerShutdownHookIfNecessary(Environment environment, LoggingSystem loggingSystem) {
-		boolean registerShutdownHook = environment.getProperty(REGISTER_SHUTDOWN_HOOK_PROPERTY, Boolean.class, false);
+		boolean registerShutdownHook = environment.getProperty(REGISTER_SHUTDOWN_HOOK_PROPERTY, Boolean.class, true);
 		if (registerShutdownHook) {
 			Runnable shutdownHandler = loggingSystem.getShutdownHandler();
 			if (shutdownHandler != null && shutdownHookRegistered.compareAndSet(false, true)) {

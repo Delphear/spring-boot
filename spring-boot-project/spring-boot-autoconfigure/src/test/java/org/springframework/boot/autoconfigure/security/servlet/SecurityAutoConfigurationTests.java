@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -77,6 +77,12 @@ class SecurityAutoConfigurationTests {
 	}
 
 	@Test
+	void filterChainBeanIsConditionalOnClassSecurityFilterChain() {
+		this.contextRunner.withClassLoader(new FilteredClassLoader(SecurityFilterChain.class))
+				.run((context) -> assertThat(context).doesNotHaveBean(SecurityFilterChain.class));
+	}
+
+	@Test
 	void securityConfigurerBacksOffWhenOtherSecurityFilterChainBeanPresent() {
 		this.contextRunner.withUserConfiguration(TestSecurityFilterChainConfig.class).run((context) -> {
 			assertThat(context.getBeansOfType(SecurityFilterChain.class).size()).isEqualTo(1);
@@ -143,9 +149,7 @@ class SecurityAutoConfigurationTests {
 
 	@Test
 	void testJpaCoexistsHappily() {
-		this.contextRunner
-				.withPropertyValues("spring.datasource.url:jdbc:hsqldb:mem:testsecdb",
-						"spring.datasource.initialization-mode:never")
+		this.contextRunner.withPropertyValues("spring.datasource.url:jdbc:hsqldb:mem:testsecdb")
 				.withUserConfiguration(EntityConfiguration.class)
 				.withConfiguration(
 						AutoConfigurations.of(HibernateJpaAutoConfiguration.class, DataSourceAutoConfiguration.class))

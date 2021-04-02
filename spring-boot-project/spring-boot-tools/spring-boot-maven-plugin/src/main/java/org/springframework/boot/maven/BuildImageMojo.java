@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 the original author or authors.
+ * Copyright 2012-2021 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import java.util.zip.ZipEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.apache.commons.compress.archivers.tar.TarConstants;
+import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.logging.Log;
 import org.apache.maven.plugins.annotations.Execute;
@@ -72,14 +73,14 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	}
 
 	/**
-	 * Directory containing the JAR.
+	 * Directory containing the source archive.
 	 * @since 2.3.0
 	 */
 	@Parameter(defaultValue = "${project.build.directory}", required = true)
 	private File sourceDirectory;
 
 	/**
-	 * Name of the JAR.
+	 * Name of the source archive.
 	 * @since 2.3.0
 	 */
 	@Parameter(defaultValue = "${project.build.finalName}", readonly = true)
@@ -93,15 +94,16 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	private boolean skip;
 
 	/**
-	 * Classifier used when finding the source jar.
+	 * Classifier used when finding the source archive.
 	 * @since 2.3.0
 	 */
 	@Parameter
 	private String classifier;
 
 	/**
-	 * Image configuration, with `builder`, `runImage`, `name`, `env`, `cleanCache`,
-	 * `verboseLogging`, and `publish` options.
+	 * Image configuration, with {@code builder}, {@code runImage}, {@code name},
+	 * {@code env}, {@code cleanCache}, {@code verboseLogging}, {@code pullPolicy}, and
+	 * {@code publish} options.
 	 * @since 2.3.0
 	 */
 	@Parameter
@@ -128,6 +130,14 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	 */
 	@Parameter(property = "spring-boot.build-image.runImage", readonly = true)
 	String runImage;
+
+	/**
+	 * Alias for {@link Image#cleanCache} to support configuration via command-line
+	 * property.
+	 * @since 2.4.0
+	 */
+	@Parameter(property = "spring-boot.build-image.cleanCache", readonly = true)
+	Boolean cleanCache;
 
 	/**
 	 * Alias for {@link Image#pullPolicy} to support configuration via command-line
@@ -167,8 +177,8 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 		try {
 			DockerConfiguration dockerConfiguration = (this.docker != null) ? this.docker.asDockerConfiguration()
 					: null;
-			Builder builder = new Builder(new MojoBuildLog(this::getLog), dockerConfiguration);
 			BuildRequest request = getBuildRequest(libraries);
+			Builder builder = new Builder(new MojoBuildLog(this::getLog), dockerConfiguration);
 			builder.build(request);
 		}
 		catch (IOException ex) {
@@ -177,7 +187,8 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 	}
 
 	private BuildRequest getBuildRequest(Libraries libraries) throws MojoExecutionException {
-		Function<Owner, TarArchive> content = (owner) -> getApplicationContent(owner, libraries);
+		ImagePackager imagePackager = new ImagePackager(getArchiveFile(), getBackupFile());
+		Function<Owner, TarArchive> content = (owner) -> getApplicationContent(owner, libraries, imagePackager);
 		Image image = (this.image != null) ? this.image : new Image();
 		if (image.name == null && this.imageName != null) {
 			image.setName(this.imageName);
@@ -187,6 +198,9 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 		}
 		if (image.runImage == null && this.runImage != null) {
 			image.setRunImage(this.runImage);
+		}
+		if (image.cleanCache == null && this.cleanCache != null) {
+			image.setCleanCache(this.cleanCache);
 		}
 		if (image.pullPolicy == null && this.pullPolicy != null) {
 			image.setPullPolicy(this.pullPolicy);
@@ -205,20 +219,34 @@ public class BuildImageMojo extends AbstractPackagerMojo {
 				|| this.docker.getPublishRegistry().isEmpty();
 	}
 
-	private TarArchive getApplicationContent(Owner owner, Libraries libraries) {
-		ImagePackager packager = getConfiguredPackager(() -> new ImagePackager(getJarFile()));
+	private TarArchive getApplicationContent(Owner owner, Libraries libraries, ImagePackager imagePackager) {
+		ImagePackager packager = getConfiguredPackager(() -> imagePackager);
 		return new PackagedTarArchive(owner, libraries, packager);
 	}
 
-	private File getJarFile() {
+	private File getArchiveFile() {
 		// We can use 'project.getArtifact().getFile()' because that was done in a
 		// forked lifecycle and is now null
-		StringBuilder name = new StringBuilder(this.finalName);
-		if (StringUtils.hasText(this.classifier)) {
-			name.append("-").append(this.classifier);
+		File archiveFile = getTargetFile(this.finalName, this.classifier, this.sourceDirectory);
+		if (!archiveFile.exists()) {
+			archiveFile = getSourceArtifact(this.classifier).getFile();
 		}
-		name.append(".jar");
-		return new File(this.sourceDirectory, name.toString());
+		if (!archiveFile.exists()) {
+			throw new IllegalStateException("A jar or war file is required for building image");
+		}
+		return archiveFile;
+	}
+
+	/**
+	 * Return the {@link File} to use to backup the original source.
+	 * @return the file to use to backup the original source
+	 */
+	private File getBackupFile() {
+		Artifact source = getSourceArtifact(null);
+		if (this.classifier != null && !this.classifier.equals(source.getClassifier())) {
+			return source.getFile();
+		}
+		return null;
 	}
 
 	private BuildRequest customize(BuildRequest request) {
